@@ -211,3 +211,186 @@ const statsObserver = new IntersectionObserver(
 );
 
 statNums.forEach(el => statsObserver.observe(el));
+
+/* ================================================================
+   AI CHAT WIDGET — Kaya
+================================================================ */
+(function () {
+  const CHAT_API = '/api/chat';   // proxied through the Node.js server
+
+  const toggleBtn   = document.getElementById('chat-toggle');
+  const closeBtn    = document.getElementById('chatCloseBtn');
+  const panel       = document.getElementById('chatPanel');
+  const messagesEl  = document.getElementById('chatMessages');
+  const input       = document.getElementById('chatInput');
+  const sendBtn     = document.getElementById('chatSend');
+  const badge       = document.getElementById('chatBadge');
+  const quickReplies = document.getElementById('quickReplies');
+  const iconOpen    = toggleBtn.querySelector('.chat-icon-open');
+  const iconClose   = toggleBtn.querySelector('.chat-icon-close');
+
+  let isOpen      = false;
+  let isLoading   = false;
+  let messageHistory = [];   // [{role, content}]
+
+  /* ── Open / Close ── */
+  function openChat() {
+    isOpen = true;
+    panel.classList.add('open');
+    iconOpen.style.display  = 'none';
+    iconClose.style.display = 'flex';
+    badge.classList.add('hidden');
+    input.focus();
+    scrollBottom();
+  }
+
+  function closeChat() {
+    isOpen = false;
+    panel.classList.remove('open');
+    iconOpen.style.display  = 'flex';
+    iconClose.style.display = 'none';
+  }
+
+  toggleBtn.addEventListener('click', () => isOpen ? closeChat() : openChat());
+  closeBtn.addEventListener('click', closeChat);
+
+  /* Close on outside click */
+  document.addEventListener('click', (e) => {
+    if (isOpen && !panel.contains(e.target) && !toggleBtn.contains(e.target)) {
+      closeChat();
+    }
+  });
+
+  /* ── Scroll to bottom ── */
+  function scrollBottom() {
+    setTimeout(() => { messagesEl.scrollTop = messagesEl.scrollHeight; }, 60);
+  }
+
+  /* ── Get current time string ── */
+  function nowStr() {
+    return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  /* ── Append message bubble ── */
+  function appendMessage(role, html, time) {
+    const wrap = document.createElement('div');
+    wrap.className = `chat-msg ${role}`;
+
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble';
+    bubble.innerHTML = html;
+
+    const ts = document.createElement('span');
+    ts.className = 'chat-time';
+    ts.textContent = time || nowStr();
+
+    wrap.appendChild(bubble);
+    wrap.appendChild(ts);
+    messagesEl.appendChild(wrap);
+    scrollBottom();
+    return wrap;
+  }
+
+  /* ── Typing indicator ── */
+  function showTyping() {
+    const wrap = document.createElement('div');
+    wrap.className = 'chat-msg assistant chat-typing';
+    wrap.id = 'typingIndicator';
+    wrap.innerHTML = `
+      <div class="chat-bubble">
+        <span class="dot-one"></span>
+        <span class="dot-two"></span>
+        <span class="dot-three"></span>
+      </div>`;
+    messagesEl.appendChild(wrap);
+    scrollBottom();
+  }
+
+  function hideTyping() {
+    const el = document.getElementById('typingIndicator');
+    if (el) el.remove();
+  }
+
+  /* ── Sanitise AI text → safe HTML ── */
+  function textToHtml(text) {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.*?)\*/g, '<em>$1</em>')
+      .replace(/\n/g, '<br/>');
+  }
+
+  /* ── Send message ── */
+  async function sendMessage(text) {
+    const userText = text.trim();
+    if (!userText || isLoading) return;
+
+    /* Hide quick-replies after first interaction */
+    if (quickReplies) quickReplies.style.display = 'none';
+
+    /* Add user bubble */
+    appendMessage('user', userText.replace(/</g, '&lt;'));
+    messageHistory.push({ role: 'user', content: userText });
+
+    input.value   = '';
+    input.disabled = true;
+    sendBtn.disabled = true;
+    isLoading = true;
+
+    showTyping();
+
+    try {
+      const res = await fetch(CHAT_API, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ messages: messageHistory }),
+      });
+
+      hideTyping();
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+
+      const { reply } = await res.json();
+      const html = textToHtml(reply);
+
+      appendMessage('assistant', html);
+      messageHistory.push({ role: 'assistant', content: reply });
+
+    } catch (err) {
+      hideTyping();
+      appendMessage('assistant',
+        '😔 Sorry, I had a little trouble connecting. Please try again or ' +
+        '<a href="https://wa.me/63969274090" target="_blank" rel="noopener" style="color:var(--teal);font-weight:600">message us on WhatsApp</a>!'
+      );
+      console.error('Chat error:', err.message);
+    } finally {
+      isLoading        = false;
+      input.disabled   = false;
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  }
+
+  /* ── Event listeners ── */
+  sendBtn.addEventListener('click', () => sendMessage(input.value));
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage(input.value);
+    }
+  });
+
+  /* Quick reply chips */
+  document.querySelectorAll('.quick-reply').forEach(btn => {
+    btn.addEventListener('click', () => {
+      sendMessage(btn.dataset.msg);
+    });
+  });
+
+}());
